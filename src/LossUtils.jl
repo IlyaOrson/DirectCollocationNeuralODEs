@@ -1,6 +1,11 @@
 module LossUtils
 # https://nextjournal.com/r3tex/loss-landscape
 
+using Statistics: std
+using ProgressLogging: @progress
+using ComponentArrays: ComponentArray
+using LazyGrids: ndgrid
+
 using ..LuxUtils: getweights
 
 function dict_weights(layers)
@@ -52,6 +57,37 @@ function simplex(α, β, θ_center, θ1, θ2)
     ϕ  = α .* θ1 .+ (1 - α) .* θ2
     ψ  = β .* ϕ .+ (1 - β) .* θ_center
     return ψ
+end
+
+function loss_landscape(controlODE, loss_fun, θ_opt, resolution, interpolation)
+    
+    # x, y = collect(resolution), collect(resolution)
+    X, Y = ndgrid(resolution, resolution)
+    # z = zeros(eltype(θ_opt_vec), length(x), length(y))
+    z = zeros(eltype(resolution), size(X))
+    
+    θ_opt_vec = collect(ComponentArray(θ_opt))
+    @info "Loss with the parameter set provided" loss_fun(controlODE, θ_opt_vec)
+    θ1, θ2 = dict_weights_randn(θ_opt, 2)
+    θm = dict_weights(θ_opt)
+    θr = Dict()
+    # @progress for (i, α) in enumerate(x), (j, β) in enumerate(y)
+    @progress for (i, (α, β)) in enumerate(zip(X, Y))
+        for k in keys(θm)
+            res = interpolation(α, β, θm[k], θ1[k], θ2[k])
+            θr[k] = (; weight=res[1], bias=res[2])
+        end
+        loss = loss_fun(controlODE, ComponentArray(θr))
+        # z[i, j] = loss
+        z[i] = loss
+    end
+    # mask inf values
+    # z[isinf.(z)] .= maximum(z[.!(isinf.(z))]) + std(z[.!(isinf.(z))])
+    # z[isinf.(z)] .= -1.
+    # log.(reshape(z, length(x), length(y)))
+    # reshape(z, length(x), length(y))
+    # log.(z)
+    X,Y,z
 end
 
 end  # LossUtils

@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.32
+# v0.19.35
 
 using Markdown
 using InteractiveUtils
@@ -19,7 +19,6 @@ end
 @time @time_imports begin
 	using PlutoUI
 	using Base: @kwdef
-	import Statistics
 	using Random: Random
 	using Lux: Lux, Dense, Chain
 	using ComponentArrays: ComponentArray, getaxes
@@ -67,22 +66,26 @@ end
 	using UnicodePlots: Plot, lineplot, lineplot!, histogram, vline!
 	using PyPlot: matplotlib, plt, ColorMap
 
-	using TranscriptionNeuralODEs:
-		vector_to_parameters,
-		optimize_infopt!,
-		extract_infopt_results,
-		chain,
-		ControlODE,
-		solve,
-		run_simulation,
-		ShadeConf,
-		square_bounds,
-		states_markers,
-		phase_portrait,
-		dict_weights_randn,
-		dict_weights,
-		simplex
+	using Revise
 end
+
+# ╔═╡ 107c170c-32d4-4613-8565-fb881307c1b7
+@time_imports using TranscriptionNeuralODEs:
+	vector_to_parameters,
+	optimize_infopt!,
+	extract_infopt_results,
+	chain,
+	ControlODE,
+	solve,
+	run_simulation,
+	ShadeConf,
+	square_bounds,
+	states_markers,
+	phase_portrait,
+	dict_weights_randn,
+	dict_weights,
+	simplex,
+	loss_landscape
 
 # ╔═╡ 3d3ef220-af04-4c72-aabe-58d29ae9eb2b
 TableOfContents()
@@ -623,65 +626,22 @@ https://nextjournal.com/r3tex/loss-landscape
 # ╔═╡ dec21a44-f25d-4a56-bb3e-8b24f913626b
 md"## Normalizations"
 
-# ╔═╡ 9e3c1ec0-6fa8-4842-98f6-44f26e0dc76b
-dict_weights_randn(vector_to_parameters(result.params[:], ps), 2);
-
-# ╔═╡ df32b1d0-3d65-4797-9715-500a6e70e2b6
-dict_weights(vector_to_parameters(result.params[:], ps));
-
 # ╔═╡ f8716793-b97d-4058-b5a6-8e68d00313b9
-vector_to_parameters(result.params[:], ps)
+# central_point = vector_to_parameters(xavier_weights[:], ps)
+central_point = vector_to_parameters(result.params[:], ps)
 
 # ╔═╡ b1ae1940-6b4a-4a10-bb46-2e692c85c2d3
 @time begin
-
-    function landscape(controlODE, θ_opt_vec, resolution, interpolate; pnt = ps)
-        x, y = collect(resolution), collect(resolution)
-        z = zeros(eltype(θ_opt_vec), length(x), length(y))
-        θ_opt = vector_to_parameters(θ_opt_vec, pnt)
-        θ1, θ2 = dict_weights_randn(θ_opt, 2)
-        θm = dict_weights(θ_opt)
-        θr = Dict()
-        @progress for (i, α) in enumerate(x), (j, β) in enumerate(y)
-            for k in keys(θm)
-                res = interpolate(α, β, θm[k], θ1[k], θ2[k])
-                θr[k] = (; weight=res[1], bias=res[2])
-            end
-            # lss = loss_continuous(controlODE, ComponentArray(θr))
-            lss = loss_discrete(controlODE, ComponentArray(θr))
-            z[i, j] = lss
-        end
-        @show Statistics.std(z[.!(isinf.(z))])
-        z[isinf.(z)] .= maximum(z[.!(isinf.(z))]) + Statistics.std(z[.!(isinf.(z))])
-        # log.(reshape(z, length(x), length(y)))
-        # reshape(z, length(x), length(y))
-        # log.(z)
-        z
-    end
-
-	resolution = -1f0:1f-1:1f1
-	# zmap = landscape(controlODE, xavier_weights[:], resolution, linear2x)
-	# zmap = landscape(controlODE, xavier_weights[:], resolution, barycentric)
-	# zmap = landscape(controlODE, xavier_weights[:], resolution, simplex)
-	# zmap = landscape(controlODE, result.params[:], resolution, linear2x)
-	# zmap = landscape(controlODE, result.params[:], resolution, barycentric)
-	zmap = landscape(controlODE, result.params[:], resolution, simplex)
-end
-
-# ╔═╡ b219de76-d25b-4da3-8734-fc2b84335671
-@time begin
-	plt.clf()
-	mshow = plt.matshow(zmap)
-	plt.colorbar(mshow)
-	plt.gcf()
+	resolution = -1f1:1f-1:1f1
+	X,Y,zmap = loss_landscape(controlODE, loss_discrete, central_point, resolution, simplex)
 end
 
 # ╔═╡ 9a261dfc-5844-4b52-b6cf-c4ceb383cd4e
 @time begin
 	plt.clf()
 	cont = plt.contourf(
-		resolution,
-		resolution,
+		X,
+		Y,
 		zmap;
 		# locator=matplotlib.ticker.AutoLocator(),
 		extend="both",
@@ -696,6 +656,7 @@ end
 # ╔═╡ Cell order:
 # ╠═31b5c73e-9641-11ec-2b0b-cbd62716cc97
 # ╠═07b1f884-6179-483a-8a0b-1771da59799f
+# ╠═107c170c-32d4-4613-8565-fb881307c1b7
 # ╠═3d3ef220-af04-4c72-aabe-58d29ae9eb2b
 # ╟─ee9852e9-b7a9-4573-a385-45e80f5db1f4
 # ╠═4fe5aa44-e7b6-409a-94b5-ae82420e2f69
@@ -758,9 +719,6 @@ end
 # ╟─63cb7acb-2e6c-4cea-8938-dc3891b274d3
 # ╟─7559fb6d-b98b-45bb-af12-d088fd74f18c
 # ╟─dec21a44-f25d-4a56-bb3e-8b24f913626b
-# ╠═9e3c1ec0-6fa8-4842-98f6-44f26e0dc76b
-# ╠═df32b1d0-3d65-4797-9715-500a6e70e2b6
 # ╠═f8716793-b97d-4058-b5a6-8e68d00313b9
 # ╠═b1ae1940-6b4a-4a10-bb46-2e692c85c2d3
-# ╠═b219de76-d25b-4da3-8734-fc2b84335671
 # ╠═9a261dfc-5844-4b52-b6cf-c4ceb383cd4e

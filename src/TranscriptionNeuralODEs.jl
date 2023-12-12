@@ -14,7 +14,7 @@ include("LossUtils.jl")
 @reexport import .InfOptUtils: optimize_infopt!, extract_infopt_results
 @reexport import .ControlUtils: ControlODE, solve, run_simulation
 @reexport import .PlotUtils: ShadeConf, square_bounds, states_markers, phase_portrait
-@reexport import .LossUtils: dict_weights_randn, dict_weights, simplex
+@reexport import .LossUtils: dict_weights_randn, dict_weights, simplex, loss_landscape
 
 greet() = print("Hello darkness my old foe!")
 
