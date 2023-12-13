@@ -9,7 +9,7 @@ include("ControlUtils.jl")
 include("PlotUtils.jl")
 include("LossUtils.jl")
 
-@reexport import .CustomNeuralNetwork: chain
+@reexport import .CustomNeuralNetwork: custom_chain
 @reexport import .LuxUtils: vector_to_parameters
 @reexport import .InfOptUtils: optimize_infopt!, extract_infopt_results
 @reexport import .ControlUtils: ControlODE, solve, run_simulation

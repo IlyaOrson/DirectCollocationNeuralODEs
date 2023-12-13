@@ -63,18 +63,18 @@ end
 	using ArgCheck: @argcheck, @check
 	using DataInterpolations: LinearInterpolation
 
-	using UnicodePlots: Plot, lineplot, lineplot!, histogram, vline!
+	using UnicodePlots: lineplot, histogram
 	using PyPlot: matplotlib, plt, ColorMap
 
 	using Revise
 end
 
 # ╔═╡ 107c170c-32d4-4613-8565-fb881307c1b7
-@time_imports using TranscriptionNeuralODEs:
+@time @time_imports using TranscriptionNeuralODEs:
 	vector_to_parameters,
 	optimize_infopt!,
 	extract_infopt_results,
-	chain,
+	custom_chain,
 	ControlODE,
 	solve,
 	run_simulation,
@@ -109,7 +109,7 @@ end;
 
 # ╔═╡ 321c438f-0e82-4e6a-a6d3-ff119d6bf556
 begin
-	layer_size = 12
+	layer_size = 8
 	layer_num = 1
 
 	neural_num_supports = 20
@@ -124,7 +124,7 @@ end;
 
 # ╔═╡ ccba9574-4a9b-4d41-923d-6897482339db
 begin
-	opt_tol = 1e-1
+	opt_tol = 1e-2
 end;
 
 # ╔═╡ 2c3e0711-a456-4962-b53b-12d0654704f1
@@ -134,6 +134,7 @@ md"## Lux framework"
 begin
 	# Construct the layer
 	final_activation(x) = (tanh.(x) * 1.3 / 2) .+ 0.3
+	# NOTE use anonymous version of tanh to avoid automatic convertion to fast_tanh
 	lchain = Chain(
 		Dense(2, layer_size, x -> tanh(x); init_weight=Lux.glorot_normal),
 		Dense(layer_size, 1, final_activation; init_weight=Lux.glorot_normal)
@@ -167,7 +168,7 @@ begin
     activations = ((tanh for _ in 1:layer_num)..., final_activation)
 
 	# use Lux initialization instead
-    # xavier_weights = start_values_sampler(nstates, layer_sizes)
+    # xavier_weights = xavier_sampler(nstates, layer_sizes)
 
 	nstates = length(u0)
 	nparams = length(xavier_weights)
@@ -184,7 +185,7 @@ function vector_fun(z)
 	# @show z typeof(z) z[1:nstates] z[nstates+1:end]
 	x = collect(z[1:nstates])
 	p = collect(z[(nstates + 1):end])
-	# return chain(x, p, layer_sizes, activations)  # custom nn
+	# return custom_chain(x, p, layer_sizes, activations)  # custom nn
 	return Lux.apply(lchain, x, vector_to_parameters(p, ps), st)[begin]  # lux nn
 end
 
@@ -363,13 +364,13 @@ end;
 map( # same chain results
 	≈,
 	Lux.apply(lchain, controlODE.u0, vector_to_parameters(xavier_weights, ps), st)[1],
-	chain(controlODE.u0, xavier_weights, layer_sizes, activations)
+	custom_chain(controlODE.u0, xavier_weights, layer_sizes, activations)
 ) |> all
 
 # ╔═╡ d2f60a56-3615-459b-bbbf-9dee822a7213
 map( # same derivatives
 	≈,
-	ReverseDiff.gradient(p -> chain(controlODE.u0, p, layer_sizes, activations), ComponentArray(ps)),
+	ReverseDiff.gradient(p -> custom_chain(controlODE.u0, p, layer_sizes, activations), ComponentArray(ps)),
 	ReverseDiff.gradient(p -> sum(Lux.apply(lchain, u0, p, st)[1]), ComponentArray(ps))
 ) |> all
 
@@ -377,7 +378,7 @@ map( # same derivatives
 @benchmark Lux.apply($lchain, $controlODE.u0, $xavier_weights, $st)
 
 # ╔═╡ 3b23856e-3ebe-4441-a47f-e9078c824d58
-@benchmark chain($controlODE.u0, $xavier_weights, $layer_sizes, $activations)
+@benchmark custom_chain($controlODE.u0, $xavier_weights, $layer_sizes, $activations)
 
 # ╔═╡ c6603841-f09c-49ac-9b84-81295b09b22b
 md"## Discrete and continuous losses"
@@ -532,16 +533,13 @@ end
 begin
 	collocation_results = extract_infopt_results(classic_model)
 	times_c, states_c, controls_c = collocation_results
+	lineplot(times_c, controls_c[1,:])
 end
 
 # ╔═╡ 751dadcb-9cc7-4719-94f0-33455bdf493d
 begin
 	reference_controller = interpolant_controller(collocation_results)
 	collocationODE = ControlODE(reference_controller, system, u0, tspan; input=:time)
-end;
-
-# ╔═╡ b502800d-3011-4a17-b25a-662aa7a1b951
-begin
 	times_cp, states_cp, controls_cp = run_simulation(collocationODE, nothing; control_input=:time, dt=1f-2)
 	lineplot(times_cp, controls_cp[1,:])
 end
@@ -623,9 +621,6 @@ md"""# Loss landscape
 https://nextjournal.com/r3tex/loss-landscape
 """
 
-# ╔═╡ dec21a44-f25d-4a56-bb3e-8b24f913626b
-md"## Normalizations"
-
 # ╔═╡ f8716793-b97d-4058-b5a6-8e68d00313b9
 # central_point = vector_to_parameters(xavier_weights[:], ps)
 central_point = vector_to_parameters(result.params[:], ps)
@@ -644,6 +639,7 @@ end
 		Y,
 		zmap;
 		# locator=matplotlib.ticker.AutoLocator(),
+		# locator=matplotlib.ticker.MaxNLocator(),
 		extend="both",
 		cmap=ColorMap("viridis"),
 	)
@@ -691,7 +687,7 @@ end
 # ╟─c31f52de-34a0-403f-9683-cc38a2386b62
 # ╠═281a5a4d-e156-4e04-a013-d1b1351dd822
 # ╠═58b96a16-f288-4e34-99b7-e0ea11a347e8
-# ╟─3061a099-3d0d-472d-a1b5-e4785b980014
+# ╠═3061a099-3d0d-472d-a1b5-e4785b980014
 # ╠═1772d71a-1f7f-43cd-a4ad-0f7f54c960d0
 # ╟─c6603841-f09c-49ac-9b84-81295b09b22b
 # ╠═52afbd53-5128-4482-b929-2c71398be122
@@ -705,7 +701,6 @@ end
 # ╠═9a9050d3-10ef-4ba9-892f-443dfc782d7c
 # ╠═57ec210a-0dda-4a1c-9478-736d669b7090
 # ╠═751dadcb-9cc7-4719-94f0-33455bdf493d
-# ╠═b502800d-3011-4a17-b25a-662aa7a1b951
 # ╟─11f17f4e-10a1-4fa8-bcb9-247e4b39ef47
 # ╠═8a55733f-8ed8-4eb6-8dbb-cfad02aff2ae
 # ╠═05007017-a435-460b-8051-ee12575785e3
@@ -718,7 +713,6 @@ end
 # ╠═2fcb5c4e-a5bf-4f26-bede-d0c53db9256d
 # ╟─63cb7acb-2e6c-4cea-8938-dc3891b274d3
 # ╟─7559fb6d-b98b-45bb-af12-d088fd74f18c
-# ╟─dec21a44-f25d-4a56-bb3e-8b24f913626b
 # ╠═f8716793-b97d-4058-b5a6-8e68d00313b9
 # ╠═b1ae1940-6b4a-4a10-bb46-2e692c85c2d3
 # ╠═9a261dfc-5844-4b52-b6cf-c4ceb383cd4e
