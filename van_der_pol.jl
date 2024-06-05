@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.35
+# v0.19.36
 
 using Markdown
 using InteractiveUtils
@@ -17,7 +17,7 @@ end
 
 # ╔═╡ 07b1f884-6179-483a-8a0b-1771da59799f
 @time @time_imports begin
-	using PlutoUI
+	using PlutoUI: TableOfContents
 	using Base: @kwdef
 	using Random: Random
 	using Lux: Lux, Dense, Chain
@@ -58,12 +58,14 @@ end
     using Enzyme: Enzyme
 
 	using QuadGK: quadgk
+	
+	using DataInterpolations: ConstantInterpolation, LinearInterpolation, QuadraticInterpolation, LagrangeInterpolation
+	
 	using BenchmarkTools: @benchmark
 
 	using ArgCheck: @argcheck, @check
-	using DataInterpolations: LinearInterpolation
 
-	using UnicodePlots: lineplot, histogram
+	using UnicodePlots: histogram
 	using PyPlot: matplotlib, plt, ColorMap
 
 	using Revise
@@ -71,7 +73,7 @@ end
 
 # ╔═╡ 107c170c-32d4-4613-8565-fb881307c1b7
 @time @time_imports using TranscriptionNeuralODEs:
-	vector_to_parameters,
+	array_to_namedtuple,
 	optimize_infopt!,
 	extract_infopt_results,
 	custom_chain,
@@ -86,6 +88,12 @@ end
 	dict_weights,
 	simplex,
 	loss_landscape
+
+# ╔═╡ 42a1e8d7-ad92-444a-bb9d-027ed8a06e22
+begin
+	import TranscriptionNeuralODEs
+	names(TranscriptionNeuralODEs)
+end
 
 # ╔═╡ 3d3ef220-af04-4c72-aabe-58d29ae9eb2b
 TableOfContents()
@@ -109,7 +117,7 @@ end;
 
 # ╔═╡ 321c438f-0e82-4e6a-a6d3-ff119d6bf556
 begin
-	layer_size = 8
+	layer_size = 16
 	layer_num = 1
 
 	neural_num_supports = 20
@@ -124,7 +132,7 @@ end;
 
 # ╔═╡ ccba9574-4a9b-4d41-923d-6897482339db
 begin
-	opt_tol = 1e-2
+	opt_tol = 1e-1
 end;
 
 # ╔═╡ 2c3e0711-a456-4962-b53b-12d0654704f1
@@ -133,10 +141,10 @@ md"## Lux framework"
 # ╔═╡ 65378422-0dd7-4e62-b465-7c1dff882784
 begin
 	# Construct the layer
-	final_activation(x) = (tanh.(x) * 1.3 / 2) .+ 0.3
-	# NOTE use anonymous version of tanh to avoid automatic convertion to fast_tanh
+	final_activation(x) = (tanh.(x) .* 2) .- 1.0
+	# NOTE avoid automatic convertion from tanh to fast_tanh
 	lchain = Chain(
-		Dense(2, layer_size, x -> tanh(x); init_weight=Lux.glorot_normal),
+		Dense(2, layer_size, tanh; init_weight=Lux.glorot_normal, allow_fast_activation=false),
 		Dense(layer_size, 1, final_activation; init_weight=Lux.glorot_normal)
 	)
 end;
@@ -145,7 +153,7 @@ end;
 begin
 	# Seeding
 	rng = Random.default_rng()
-	# Random.seed!(rng, 0)
+	Random.seed!(rng, 0)
 
 	# Parameter and State Variables
 	ps, st = Lux.setup(rng, lchain)
@@ -160,7 +168,7 @@ end;
 xavier_weights |> histogram
 
 # ╔═╡ 13c38797-bc05-4794-b99b-a4aafb2e0503
-md"## Custom NN for JuMP usage"
+md"## Custom feedforward NN"
 
 # ╔═╡ 253458ec-12d1-4228-b57a-73c02b3b2c49
 begin
@@ -169,16 +177,19 @@ begin
 
 	# use Lux initialization instead
     # xavier_weights = xavier_sampler(nstates, layer_sizes)
+end;
 
+# ╔═╡ 0ac534b3-40b4-44ef-a903-0ea69db883e2
+md"## User defined functions API in JuMP"
+
+# ╔═╡ 62945ff7-e39c-40c5-9be7-3e43a1930565
+begin
 	nstates = length(u0)
 	nparams = length(xavier_weights)
 
 	cat_params = vcat(u0 , collect(xavier_weights))
 	grad_container =  similar(cat_params)
-end;
-
-# ╔═╡ 0ac534b3-40b4-44ef-a903-0ea69db883e2
-md"## User defined functions API in JuMP"
+end
 
 # ╔═╡ 02377f26-039d-4685-ba94-1574b3b18aa6
 function vector_fun(z)
@@ -186,7 +197,7 @@ function vector_fun(z)
 	x = collect(z[1:nstates])
 	p = collect(z[(nstates + 1):end])
 	# return custom_chain(x, p, layer_sizes, activations)  # custom nn
-	return Lux.apply(lchain, x, vector_to_parameters(p, ps), st)[begin]  # lux nn
+	return Lux.apply(lchain, x, array_to_namedtuple(p, ps), st)[begin]  # lux nn
 end
 
 # ╔═╡ aa575018-f57d-4180-9663-44da68d6c77c
@@ -214,8 +225,16 @@ grad!(grad_container, params) = ReverseDiff.gradient!(grad_container, ctape, par
 # ╔═╡ 826d4479-9db0-44d6-98ae-b46e7a6a0b4e
 md"## Sanity checks"
 
+# ╔═╡ 84027727-3198-4884-b71c-ab4ca86ae5d7
+xavier_weights == ComponentArray(array_to_namedtuple(xavier_weights, ps))
+
 # ╔═╡ 62626cd0-c55b-4c29-94c2-9d736f335349
 md"# Collocation with policy"
+
+# ╔═╡ a86ee119-6f73-4ba5-a255-b13e0bc6ca95
+function scope_test(model, x)
+	@constraint(model, -0.4 <= x[1])
+end
 
 # ╔═╡ d8888d92-71df-4c0e-bdc1-1249e3da23d0
 function build_neural_collocation(;
@@ -261,9 +280,10 @@ function build_neural_collocation(;
     # initial conditions
 	@constraint(model, [i = 1:2], x[i](0) == u0[i])
 
-    if constrain_states
-        @constraint(model, -0.4 <= x[1])  # FIXME
-    end
+    # if constrain_states
+    #     @constraint(model, -0.4 <= x[1])  # FIXME
+    # end
+	scope_test(model, x)
 
 	# https://github.com/jump-dev/MathOptInterface.jl/pull/1819
 	# JuMP.register(optimizer_model(model), :scalar_fun, length(cat_params), scalar_fun; autodiff=true)  # forward mode
@@ -356,14 +376,14 @@ end
 begin
 	system = VanDerPol()
 	# controller = (x, p) -> chain(x, p, layer_sizes, activations)
-	controller = (x, p) -> Lux.apply(lchain, x, vector_to_parameters(p, ps), st)[1]
+	controller = (x, p) -> Lux.apply(lchain, x, array_to_namedtuple(p, ps), st)[begin]
 	controlODE = ControlODE(controller, system, u0, tspan)
 end;
 
 # ╔═╡ 2590217d-f9e4-4ddf-a0f8-4830b870fad5
 map( # same chain results
 	≈,
-	Lux.apply(lchain, controlODE.u0, vector_to_parameters(xavier_weights, ps), st)[1],
+	Lux.apply(lchain, controlODE.u0, array_to_namedtuple(xavier_weights, ps), st)[1],
 	custom_chain(controlODE.u0, xavier_weights, layer_sizes, activations)
 ) |> all
 
@@ -384,11 +404,11 @@ map( # same derivatives
 md"## Discrete and continuous losses"
 
 # ╔═╡ 52afbd53-5128-4482-b929-2c71398be122
-function loss_discrete(controlODE, params; kwargs...)
+function loss_discrete(controlODE, params; inf_penalty=true, kwargs...)
     objective = zero(eltype(params))
     sol = solve(controlODE, params; kwargs...)
 	sol_arr = Array(sol)
-	if state_bound_violation(controlODE.system, sol_arr)
+	if inf_penalty && state_bound_violation(controlODE.system, sol_arr)
 		return Inf
 	end
     for (i, col) in enumerate(axes(sol, 2))
@@ -420,11 +440,6 @@ function loss_continuous(controlODE, params; inf_penalty=true, kwargs...)
 	# 	return Inf
 	# end
 end
-
-# ╔═╡ e47b3510-6e9d-461a-8ca6-ce32d30404ad
-# same loss
-loss_continuous(controlODE, xavier_weights) ≈
-loss_continuous(controlODE, ComponentArray(vector_to_parameters(xavier_weights, ps)))
 
 # ╔═╡ 42f26a4c-ac76-4212-80f9-82858ce2959c
 loss_continuous(controlODE, result.params)
@@ -512,14 +527,18 @@ begin
 	optimize_infopt!(classic_model; verbose=false)
 end;
 
-# ╔═╡ 9a9050d3-10ef-4ba9-892f-443dfc782d7c
-function interpolant_controller(collocation; plot=nothing)
 
-    num_controls = size(collocation.controls, 1)
+# ╔═╡ 81acdc27-2a9d-4062-b1e7-d139a3abe5a9
+function interpolant_controller(collocation; interpolator=LinearInterpolation)
+	# not all interpolators support multidimensional data out-of-the-box
+	# but this can be done manually for the time being
+	# https://github.com/SciML/DataInterpolations.jl/issues/206
+
+	# TODO generalize this to intepolate states states as well
+	num_controls = size(collocation.controls, 1)
 
     interpolations = [
-        LinearInterpolation(collocation.controls[i, :], collocation.times) for i in 1:num_controls
-        # CubicSpline(collocation.controls[i, :], collocation.times) for i in 1:num_controls
+        interpolator(collocation.controls[i, :], collocation.times) for i in 1:num_controls
     ]
 
     function control_profile(t, p)
@@ -533,7 +552,6 @@ end
 begin
 	collocation_results = extract_infopt_results(classic_model)
 	times_c, states_c, controls_c = collocation_results
-	lineplot(times_c, controls_c[1,:])
 end
 
 # ╔═╡ 751dadcb-9cc7-4719-94f0-33455bdf493d
@@ -541,7 +559,16 @@ begin
 	reference_controller = interpolant_controller(collocation_results)
 	collocationODE = ControlODE(reference_controller, system, u0, tspan; input=:time)
 	times_cp, states_cp, controls_cp = run_simulation(collocationODE, nothing; control_input=:time, dt=1f-2)
-	lineplot(times_cp, controls_cp[1,:])
+end
+
+# ╔═╡ e1c0f4a5-6660-4bd2-bed8-d82665c34f19
+@time begin
+	plt.clf()
+	plt.plot(times_c, controls_c[1,:], label="Collocation control")
+	plt.plot(times_cp, controls_cp[1,:], label="Neural control")
+	plt.title("Control Profile")
+	plt.legend()
+	plt.gcf()
 end
 
 # ╔═╡ 11f17f4e-10a1-4fa8-bcb9-247e4b39ef47
@@ -622,12 +649,12 @@ https://nextjournal.com/r3tex/loss-landscape
 """
 
 # ╔═╡ f8716793-b97d-4058-b5a6-8e68d00313b9
-# central_point = vector_to_parameters(xavier_weights[:], ps)
-central_point = vector_to_parameters(result.params[:], ps)
+# central_point = array_to_namedtuple(xavier_weights[:], ps)
+central_point = array_to_namedtuple(result.params[:], ps)
 
 # ╔═╡ b1ae1940-6b4a-4a10-bb46-2e692c85c2d3
 @time begin
-	resolution = -1f1:1f-1:1f1
+	resolution = -5f0:1f-1:5f0
 	X,Y,zmap = loss_landscape(controlODE, loss_discrete, central_point, resolution, simplex)
 end
 
@@ -653,6 +680,7 @@ end
 # ╠═31b5c73e-9641-11ec-2b0b-cbd62716cc97
 # ╠═07b1f884-6179-483a-8a0b-1771da59799f
 # ╠═107c170c-32d4-4613-8565-fb881307c1b7
+# ╠═42a1e8d7-ad92-444a-bb9d-027ed8a06e22
 # ╠═3d3ef220-af04-4c72-aabe-58d29ae9eb2b
 # ╟─ee9852e9-b7a9-4573-a385-45e80f5db1f4
 # ╠═4fe5aa44-e7b6-409a-94b5-ae82420e2f69
@@ -667,6 +695,7 @@ end
 # ╟─13c38797-bc05-4794-b99b-a4aafb2e0503
 # ╠═253458ec-12d1-4228-b57a-73c02b3b2c49
 # ╟─0ac534b3-40b4-44ef-a903-0ea69db883e2
+# ╠═62945ff7-e39c-40c5-9be7-3e43a1930565
 # ╠═02377f26-039d-4685-ba94-1574b3b18aa6
 # ╠═aa575018-f57d-4180-9663-44da68d6c77c
 # ╟─12b71a53-cbe3-4cb3-a383-c341048616e8
@@ -674,12 +703,13 @@ end
 # ╠═cf9abc47-962f-4837-a4e5-7e5984dae474
 # ╠═09ef9cc4-2564-44fe-be1e-ce75ad189875
 # ╟─826d4479-9db0-44d6-98ae-b46e7a6a0b4e
-# ╠═e47b3510-6e9d-461a-8ca6-ce32d30404ad
+# ╠═84027727-3198-4884-b71c-ab4ca86ae5d7
 # ╠═2590217d-f9e4-4ddf-a0f8-4830b870fad5
 # ╠═d2f60a56-3615-459b-bbbf-9dee822a7213
 # ╠═e42a34d5-cef0-4630-a19f-cee50b7851a7
 # ╠═3b23856e-3ebe-4441-a47f-e9078c824d58
 # ╟─62626cd0-c55b-4c29-94c2-9d736f335349
+# ╠═a86ee119-6f73-4ba5-a255-b13e0bc6ca95
 # ╠═d8888d92-71df-4c0e-bdc1-1249e3da23d0
 # ╠═732b8e45-fb51-454b-81d2-2d084c12df73
 # ╠═edd395e2-58b7-41af-85ae-6af612154df5
@@ -698,9 +728,10 @@ end
 # ╟─10529d5d-486e-4455-9876-5ac46768ce8a
 # ╠═7eec23a8-1840-47db-aba8-89f9f057d9a4
 # ╠═1a9bcfe7-23f5-4c89-946c-0a97194778f0
-# ╠═9a9050d3-10ef-4ba9-892f-443dfc782d7c
+# ╠═81acdc27-2a9d-4062-b1e7-d139a3abe5a9
 # ╠═57ec210a-0dda-4a1c-9478-736d669b7090
 # ╠═751dadcb-9cc7-4719-94f0-33455bdf493d
+# ╠═e1c0f4a5-6660-4bd2-bed8-d82665c34f19
 # ╟─11f17f4e-10a1-4fa8-bcb9-247e4b39ef47
 # ╠═8a55733f-8ed8-4eb6-8dbb-cfad02aff2ae
 # ╠═05007017-a435-460b-8051-ee12575785e3

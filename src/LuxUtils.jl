@@ -6,12 +6,12 @@ using Functors: fmap
 
 getweights(l) = (l.weight, l.bias)
 
-function vector_to_parameters(ps_new::AbstractMatrix, ps::NamedTuple)
+function array_to_namedtuple(ps_new::AbstractMatrix, ps::NamedTuple)
 	@check size(ps_new, 1) == Lux.parameterlength(ps)
-	vector_to_parameters(ps_new[:], ps)
+	array_to_namedtuple(ps_new[:], ps)
 end
 
-function vector_to_parameters(ps_new::AbstractVector, ps::NamedTuple)
+function array_to_namedtuple(ps_new::AbstractVector, ps::NamedTuple)
     @check length(ps_new) == Lux.parameterlength(ps)
     i = 1
     function get_ps(x)

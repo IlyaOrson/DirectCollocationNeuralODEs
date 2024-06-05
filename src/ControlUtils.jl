@@ -5,7 +5,6 @@ using SciMLBase: AbstractODEAlgorithm, AbstractODEProblem, ODEProblem, DECallbac
 using DiffEqCallbacks: FunctionCallingCallback
 import OrdinaryDiffEq
 
-
 struct ControlODE{T<:Real}
     controller
     system

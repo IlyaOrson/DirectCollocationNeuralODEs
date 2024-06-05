@@ -68,4 +68,7 @@ function xavier_sampler(
 	return sample_array
 end
 
+# test consistency with Flux
+
+
 end  # CustomNeuralNetwork
