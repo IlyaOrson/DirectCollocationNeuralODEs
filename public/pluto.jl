@@ -1,6 +1,16 @@
 ### A Pluto.jl notebook ###
 # v0.19.46
 
+#> [frontmatter]
+#> title = "Training NeuralODEs with direct collocation"
+#> date = "2025-01-17"
+#> tags = ["NeuralODEs", "collocation", "training", "julia", "optimal control"]
+#> description = "Avoid adjoint calculations!"
+#> 
+#>     [[frontmatter.author]]
+#>     name = "Ilya Orson Sandoval"
+#>     url = "https://github.com/ilyaorson"
+
 using Markdown
 using InteractiveUtils
 
@@ -1027,144 +1037,6 @@ begin
 	| Classic   | $obj_classic | $time_classic | $num_vars_classic |"""
 end
 
-# ╔═╡ 7559fb6d-b98b-45bb-af12-d088fd74f18c
-md"""# Loss landscape
-
-https://nextjournal.com/r3tex/loss-landscape
-"""
-
-# ╔═╡ dec21a44-f25d-4a56-bb3e-8b24f913626b
-md"## Normalizations"
-
-# ╔═╡ 08ecf45f-bd51-46c4-94f0-a438a0397c64
-getweights(l) = (l.weight, l.bias)
-
-# ╔═╡ ae6dbe7f-32dd-438c-be54-ee4d2abee7fd
-function dict_weights(layers)
-    out = Dict{Symbol, Any}()
-    for k in keys(layers)
-		out[k] = getweights(layers[k])
-    end
-    return out
-end
-
-# ╔═╡ 54b8fb32-0a6d-4a1b-a40e-d0ffd1eedbf0
-begin  # https://nextjournal.com/r3tex/loss-landscape
-	lnkern(dir, min) = sqrt(sum(min.^2)) .* dir ./ sqrt(sum(dir.^2))
-
-	function fnkern(dir, min)
-		dim = ndims(dir) == 4 ? [1,2,3] : [1]
-		# @show dim ndims(dir)
-	    sqrt.(sum(min.^2, dims=dim)) .* dir ./ sqrt.(sum(dir.^2, dims=dim))
-	end
-
-	layernorm(dir, min) = lnkern.(dir, min)
-	filternorm(dir, min) = fnkern.(dir, min)
-
-	function linear2x(α, β, θ_center, θ1, θ2)
-	    ψ = α .* θ1 .+ (1 - α) .* θ_center
-		# @show θ_center θ1 θ2 ψ
-		# @show layernorm(ψ, θ_opt)
-	    return β .* θ2 .+ (1 - β) .* layernorm(ψ, θ_center)
-	end
-
-	function barycentric(α, β, θ_center, θ1, θ2)
-	    ϕ  = α .* (θ1 .- θ_center) .+ θ_center
-	    ψ  = β .* (θ2 .- θ_center) .+ θ_center
-		# @show θ_center θ1 θ2 ψ ϕ
-		# @show filternorm(ψ, θ_center)
-	    return α .* filternorm(ϕ, θ_center) .+ (1 - β) .* filternorm(ψ, θ_center)
-	end
-
-	function simplex(α, β, θ_center, θ1, θ2)
-	    ϕ  = α .* θ1 .+ (1 - α) .* θ2
-	    ψ  = β .* ϕ .+ (1 - β) .* θ_center
-	    return ψ
-	end
-end
-
-# ╔═╡ af9cd30d-a8b8-4ef1-83aa-df7aa9036940
-function dict_weights_randn(layers, n)
-    dicts = [Dict{Symbol, Any}() for i in 1:n]
-    for dict in dicts, k in keys(layers)
-		w, b = layers[k]
-		randy = (randn(eltype(w), size(w)), randn(eltype(b), size(b)))
-		# dict[k] = filternorm(randy, getweights(layers[k]))
-		dict[k] = layernorm(randy, getweights(layers[k]))
-    end
-    return dicts
-end
-
-# ╔═╡ 9e3c1ec0-6fa8-4842-98f6-44f26e0dc76b
-dict_weights_randn(vector_to_parameters(result.params[:], ps), 2);
-
-# ╔═╡ df32b1d0-3d65-4797-9715-500a6e70e2b6
-dict_weights(vector_to_parameters(result.params[:], ps));
-
-# ╔═╡ 2526091c-a56f-4e0b-90f4-79ffa634c436
-function landscape(controlODE, θ_opt_vec, resolution, interpolate; pnt = ps)
-    x, y = collect(resolution), collect(resolution)
-	z = zeros(eltype(θ_opt_vec), length(x), length(y))
-    θ_opt = vector_to_parameters(θ_opt_vec, pnt)
-	θ1, θ2 = dict_weights_randn(θ_opt, 2)
-    θm = dict_weights(θ_opt)
-	θr = Dict()
-    @progress for (i, α) in enumerate(x), (j, β) in enumerate(y)
-        for k in keys(θm)
-            res = interpolate(α, β, θm[k], θ1[k], θ2[k])
-			θr[k] = (; weight=res[1], bias=res[2])
-        end
-		# lss = loss_continuous(controlODE, ComponentArray(θr))
-		lss = loss_discrete(controlODE, ComponentArray(θr))
-		z[i, j] = lss
-	end
-	@show Statistics.std(z[.!(isinf.(z))])
-    z[isinf.(z)] .= maximum(z[.!(isinf.(z))]) + Statistics.std(z[.!(isinf.(z))])
-    # log.(reshape(z, length(x), length(y)))
-    # reshape(z, length(x), length(y))
-	# log.(z)
-	z
-end
-
-# ╔═╡ f8716793-b97d-4058-b5a6-8e68d00313b9
-vector_to_parameters(result.params[:], ps)
-
-# ╔═╡ b1ae1940-6b4a-4a10-bb46-2e692c85c2d3
-@time begin
-	resolution = -1f0:1f-1:1f1
-	# zmap = landscape(controlODE, xavier_weights[:], resolution, linear2x)
-	# zmap = landscape(controlODE, xavier_weights[:], resolution, barycentric)
-	# zmap = landscape(controlODE, xavier_weights[:], resolution, simplex)
-	# zmap = landscape(controlODE, result.params[:], resolution, linear2x)
-	# zmap = landscape(controlODE, result.params[:], resolution, barycentric)
-	zmap = landscape(controlODE, result.params[:], resolution, simplex)
-end
-
-# ╔═╡ b219de76-d25b-4da3-8734-fc2b84335671
-@time begin
-	plt.clf()
-	mshow = plt.matshow(zmap)
-	plt.colorbar(mshow)
-	plt.gcf()
-end
-
-# ╔═╡ 9a261dfc-5844-4b52-b6cf-c4ceb383cd4e
-@time begin
-	plt.clf()
-	cont = plt.contourf(
-		resolution,
-		resolution,
-		zmap;
-		# locator=matplotlib.ticker.AutoLocator(),
-		extend="both",
-		cmap=ColorMap("viridis"),
-	)
-	plt.xlabel("α")
-	plt.ylabel("β")
-	plt.colorbar(cont)
-	plt.gcf()
-end
-
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
@@ -1222,7 +1094,7 @@ UnicodePlots = "~3.6.4"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.11.0"
+julia_version = "1.11.2"
 manifest_format = "2.0"
 project_hash = "36f67e503a12d0aeaa95f477472b512bf1c81fdb"
 
@@ -3523,18 +3395,5 @@ version = "17.4.0+2"
 # ╠═55b9cca5-9fc3-44eb-943b-25cd65e59e11
 # ╠═2fcb5c4e-a5bf-4f26-bede-d0c53db9256d
 # ╟─63cb7acb-2e6c-4cea-8938-dc3891b274d3
-# ╟─7559fb6d-b98b-45bb-af12-d088fd74f18c
-# ╟─dec21a44-f25d-4a56-bb3e-8b24f913626b
-# ╠═08ecf45f-bd51-46c4-94f0-a438a0397c64
-# ╟─ae6dbe7f-32dd-438c-be54-ee4d2abee7fd
-# ╠═af9cd30d-a8b8-4ef1-83aa-df7aa9036940
-# ╠═54b8fb32-0a6d-4a1b-a40e-d0ffd1eedbf0
-# ╠═9e3c1ec0-6fa8-4842-98f6-44f26e0dc76b
-# ╠═df32b1d0-3d65-4797-9715-500a6e70e2b6
-# ╠═2526091c-a56f-4e0b-90f4-79ffa634c436
-# ╠═f8716793-b97d-4058-b5a6-8e68d00313b9
-# ╠═b1ae1940-6b4a-4a10-bb46-2e692c85c2d3
-# ╠═b219de76-d25b-4da3-8734-fc2b84335671
-# ╠═9a261dfc-5844-4b52-b6cf-c4ceb383cd4e
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
